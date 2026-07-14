@@ -136,7 +136,7 @@ def ottieni_sessioni_attive_globali():
 
 # --- 5. CARICAMENTO E PULIZIA DATI ---
 if os.path.exists('orario.csv'):
-    df = pd.read_csv('orario1csv', encoding='utf-8')
+    df = pd.read_csv('orariocsv', encoding='utf-8')
     df.columns = df.columns.str.strip()
     
     df['Classe'] = df['Classe'].astype(str).str.strip()
