@@ -229,9 +229,10 @@ st.markdown("---")
 # --- 10. SIDEBAR AMMINISTRATORE ---
 with st.sidebar:
     st.header("⚙️ Amministrazione")
-    if st.text_input("Password di sistema:", type="password") == "ADMIN_PASSWORD":
-        st.success("Accesso Amministratore")
-        
+    if password_inserita == st.secrets["ADMIN_PASSWORD"]:
+    st.write("Accesso amministratore effettuato!")
+    else:
+    st.write("Password errata.")
         st.subheader("📊 Esportazione Registro")
         if os.path.exists(FILE_LOG):
             with open(FILE_LOG, "r", encoding="utf-8") as f:
