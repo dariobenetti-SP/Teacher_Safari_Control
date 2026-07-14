@@ -233,6 +233,10 @@ with st.sidebar:
     # 1. Definiamo la variabile prima del controllo
     password_inserita = st.text_input("Password Amministratore:", type="password")
 
+    if "ADMIN_PASSWORD" not in st.secrets:
+        st.error("⚠️ La password amministratore non è ancora stata letta correttamente dal Cloud.")
+    elif password_inserita == st.secrets["ADMIN_PASSWORD"]:
+        # ... qui va il codice per l'accesso riuscito ...
     # 2. Controllo accesso
     if password_inserita == st.secrets["ADMIN_PASSWORD"]:
         st.success("Accesso amministratore effettuato!")
