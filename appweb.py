@@ -229,7 +229,7 @@ st.markdown("---")
 # --- 10. SIDEBAR AMMINISTRATORE ---
 with st.sidebar:
     st.header("⚙️ Amministrazione")
-    if st.text_input("Password di sistema:", type="password") == "1234":
+    if st.text_input("Password di sistema:", type="password") == "la_tua_password_segreta":
         st.success("Accesso Amministratore")
         
         st.subheader("📊 Esportazione Registro")
