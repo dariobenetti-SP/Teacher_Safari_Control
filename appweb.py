@@ -230,40 +230,46 @@ st.markdown("---")
 with st.sidebar:
     st.header("⚙️ Amministrazione")
     
-    # 1. Definiamo la variabile prima del controllo
+    # 1. Definiamo la variabile raccogliendo l'input dell'utente
     password_inserita = st.text_input("Password Amministratore:", type="password")
 
+    # 2. Controllo di sicurezza: la chiave esiste nei Secrets del Cloud?
     if "ADMIN_PASSWORD" not in st.secrets:
         st.error("⚠️ La password amministratore non è ancora stata letta correttamente dal Cloud.")
-    elif password_inserita == st.secrets["ADMIN_PASSWORD"]:
-        # ... qui va il codice per l'accesso riuscito ...
-    # 2. Controllo accesso
-    if password_inserita == st.secrets["ADMIN_PASSWORD"]:
-        st.success("Accesso amministratore effettuato!")
-        
-        # --- SEZIONE AMMINISTRATIVA (Sposta qui dentro) ---
-        st.subheader("📊 Esportazione Registro")
-        if os.path.exists(FILE_LOG):
-            with open(FILE_LOG, "r", encoding="utf-8") as f:
-                st.download_button("📥 Scarica log_utilizzi.csv", f, "log_utilizzi.csv", "text/csv", use_container_width=True)
-        else:
-            st.info("Nessun dato registrato nel log.")
-            
-        st.markdown("---")
-        
-        if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
-            with st.spinner("Sincronizzazione in corso..."):
-                for nome, ids in MAPPA_CLASSI.items():
-                    devs = recupera_dispositivi_in_gruppo(ids["libera"])
-                    if devs:
-                        esegui_azione("remove", ids["libera"], devs)
-                        esegui_azione("add", ids["bloccata"], devs)
-                st.success("Gruppi ripristinati correttamente.")
-
-    # 3. Gestione errore
     else:
-        if password_inserita: # Mostra errore solo se l'utente ha scritto qualcosa
+        # Se la chiave esiste, eseguiamo il controllo in totale sicurezza
+        if password_inserita == st.secrets["ADMIN_PASSWORD"]:
+            st.success("Accesso amministratore effettuato!")
+            
+            # --- SEZIONE AMMINISTRATIVA ---
+            st.subheader("📊 Esportazione Registro")
+            if os.path.exists(FILE_LOG):
+                with open(FILE_LOG, "r", encoding="utf-8") as f:
+                    st.download_button(
+                        "📥 Scarica log_utilizzi.csv", 
+                        f, 
+                        "log_utilizzi.csv", 
+                        "text/csv", 
+                        use_container_width=True
+                    )
+            else:
+                st.info("Nessun dato registrato nel log.")
+                
+            st.markdown("---")
+            
+            if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
+                with st.spinner("Sincronizzazione in corso..."):
+                    for nome, ids in MAPPA_CLASSI.items():
+                        devs = recupera_dispositivi_in_gruppo(ids["libera"])
+                        if devs:
+                            esegui_azione("remove", ids["libera"], devs)
+                            esegui_azione("add", ids["bloccata"], devs)
+                    st.success("Gruppi ripristinati correttamente.")
+                    
+        # 3. Gestione errore password (solo se l'utente ha digitato qualcosa)
+        elif password_inserita:
             st.error("Password errata.")
+            
 # --- 11. GESTIONE PANNELLI INTERFACCIA ---
 zona_dinamica = st.empty()
 
