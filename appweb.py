@@ -230,9 +230,9 @@ st.markdown("---")
 with st.sidebar:
     st.header("⚙️ Amministrazione")
     if password_inserita == st.secrets["ADMIN_PASSWORD"]:
-    st.write("Accesso amministratore effettuato!")
+        st.write("Accesso amministratore effettuato!")
     else:
-    st.write("Password errata.")
+        st.write("Password errata.")
         st.subheader("📊 Esportazione Registro")
         if os.path.exists(FILE_LOG):
             with open(FILE_LOG, "r", encoding="utf-8") as f:
