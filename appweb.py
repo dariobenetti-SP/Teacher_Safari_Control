@@ -3,8 +3,9 @@ import pandas as pd
 import requests
 import time
 import csv
-import io  # <-- NUOVO: per l'esportazione dinamica del CSV
-import gspread  # <-- NUOVO: per la connessione a Google Sheets
+import io
+import gspread
+import zoneinfo
 from datetime import datetime, timedelta, time as dt_time
 import os
 
@@ -16,7 +17,7 @@ JAMF_URL = "https://liceosportivopd.jamfcloud.com/api"
 AUTH = (st.secrets["jamf"]["username"], st.secrets["jamf"]["password"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
-# 📝 NOME DEL TUO FOGLIO GOOGLE (Modificalo qui se lo hai chiamato diversamente su Drive)
+# NOME DEL TUO FOGLIO GOOGLE (Modificalo qui se lo hai chiamato diversamente su Drive)
 NOME_FOGLIO = "Log-Teacher-Safari"
 
 MAPPA_CLASSI = {
@@ -52,17 +53,20 @@ def formatta_materia(sigla):
         return f"{nome_esteso} · {sigla.strip()}"
     return sigla.strip()
 
+# --- GESTIONE ORA ITALIANA ---
+def ora_ita():
+    """Restituisce l'orario esatto di Roma/Padova ignorando l'orario del server cloud"""
+    return datetime.now(zoneinfo.ZoneInfo("Europe/Rome"))
 
-# --- NUOVA SEZIONE: CONNESSIONE APERTA UNA SOLA VOLTA (CACHE) ---
+# --- CONNESSIONE GOOGLE SHEETS ---
 @st.cache_resource
 def inizializza_connessione_sheets():
     """Si connette a Google Sheets una sola volta all'avvio usando i Secrets."""
     try:
         gc = gspread.service_account_from_dict(st.secrets["gspread"])
         sh = gc.open(NOME_FOGLIO)
-        ws = sh.get_worksheet(0)  # Primo pannello del foglio
+        ws = sh.get_worksheet(0)
         
-        # Se il foglio è completamente vuoto, crea la riga di intestazione
         if len(ws.get_all_values()) == 0:
             intestazioni = ["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"]
             ws.append_row(intestazioni)
@@ -72,13 +76,11 @@ def inizializza_connessione_sheets():
         st.error(f"Impossibile connettersi a Google Sheets: {e}")
         return None
 
-# Avvia la connessione globale
 worksheet = inizializza_connessione_sheets()
-
 
 # --- 3. DETERMINAZIONE FASCIA ORARIA ---
 def determina_ora_scolastica():
-    current_time = datetime.now().time()
+    current_time = ora_ita().time()
     if dt_time(8, 0) <= current_time < dt_time(9, 0): return 1
     if dt_time(9, 0) <= current_time < dt_time(9, 55): return 2
     if dt_time(9, 55) <= current_time < dt_time(10, 50): return 3
@@ -115,12 +117,11 @@ def blocca_classe_sicuro(classe_nome):
         return esegui_azione("add", ids["bloccata"], devices)
     return True
 
-
-# --- MODIFICATO: SCRITTURA LOG DIRETTAMENTE SU GOOGLE SHEETS ---
+# --- SCRITTURA LOG SU GOOGLE SHEETS ---
 def scrivi_log(azione, classe, docente, materia, durata=""):
     if worksheet is not None:
         try:
-            now = datetime.now()
+            now = ora_ita()
             nuova_riga = [
                 now.strftime("%d/%m/%Y"), 
                 now.strftime("%H:%M:%S"), 
@@ -134,35 +135,34 @@ def scrivi_log(azione, classe, docente, materia, durata=""):
         except Exception as e:
             st.error(f"Errore durante il salvataggio del log su Google Sheets: {e}")
 
-
-# --- MODIFICATO: LETTURA SESSIONI CONDIVISE DA GOOGLE SHEETS ---
+# --- LETTURA SESSIONI CONDIVISE DA GOOGLE SHEETS ---
 def ottieni_sessioni_attive_globali():
     if worksheet is None:
         return []
     
     try:
-        # Recupera tutti i dati dal foglio in formato dizionario
         records = worksheet.get_all_records()
         if not records:
             return []
             
         df_log = pd.DataFrame(records)
-        oggi = datetime.now().strftime("%d/%m/%Y")
+        oggi = ora_ita().strftime("%d/%m/%Y")
         df_oggi = df_log[df_log['Data'] == oggi]
         
         if df_oggi.empty:
             return []
             
-        # Troviamo l'ultima azione registrata per ogni classe oggi
         ultime_azioni = df_oggi.sort_values(by=['Ora_Reale']).groupby('Classe').last()
         
         sessioni_attive = []
-        ora_attuale = datetime.now()
+        ora_attuale = ora_ita()
         
         for classe, row in ultime_azioni.iterrows():
             if row['Azione'] == 'SBLOCCO':
                 try:
                     ora_inizio = datetime.strptime(f"{oggi} {row['Ora_Reale']}", "%d/%m/%Y %H:%M:%S")
+                    ora_inizio = ora_inizio.replace(tzinfo=zoneinfo.ZoneInfo("Europe/Rome"))
+                    
                     durata = int(row['Durata_Minuti'])
                     ora_fine = ora_inizio + timedelta(minutes=durata)
                     
@@ -198,10 +198,10 @@ if os.path.exists('orario.csv'):
         sigle_raw = sorted(df['Materia'].dropna().unique().tolist())
         lista_materie_display = [formatta_materia(s) for s in sigle_raw] + ["Altro"]
 else:
-    st.error("File 'orario1.csv' non trovato.")
+    st.error("File 'orario.csv' non trovato.")
     st.stop()
 
-# --- 6. IDENTIFICAZIONE DOCENTE (URL PAYLOAD JAMF O FALLBACK) ---
+# --- 6. IDENTIFICAZIONE DOCENTE ---
 param_docente = st.query_params.get("docente", None)
 
 if param_docente:
@@ -212,7 +212,7 @@ else:
 # --- 7. LOGICA AUTO-COMPILAZIONE ---
 ora_scolastica_attuale = determina_ora_scolastica()
 giorni_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
-giorno_oggi = giorni_it[datetime.now().weekday()]
+giorno_oggi = giorni_it[ora_ita().weekday()]
 
 classe_suggerita = lista_classi[0] if lista_classi else ""
 materia_suggerita = lista_materie_display[0] if lista_materie_display else ""
@@ -279,12 +279,11 @@ with st.sidebar:
         if password_inserita == st.secrets["ADMIN_PASSWORD"]:
             st.success("Accesso amministratore effettuato!")
             
-            # --- MODIFICATO: ESPORTAZIONE REGISTRO DA GOOGLE SHEETS IN TEMPO REALE ---
             st.subheader("📊 Esportazione Registro")
             if worksheet is not None:
                 try:
                     records = worksheet.get_all_values()
-                    if len(records) > 1:  # Almeno intestazione + una riga di dati
+                    if len(records) > 1: 
                         output = io.StringIO()
                         writer = csv.writer(output)
                         writer.writerows(records)
@@ -348,7 +347,7 @@ with zona_dinamica.container():
                 if esegui_azione("remove", ids["bloccata"], udids):
                     time.sleep(1.5)
                     if esegui_azione("add", ids["libera"], udids):
-                        st.session_state.expiry_time = datetime.now() + timedelta(minutes=durata)
+                        st.session_state.expiry_time = ora_ita() + timedelta(minutes=durata)
                         st.session_state.total_duration_secs = durata * 60
                         st.session_state.classe_attiva = classe_sel
                         st.session_state.docente_effettivo = doc_effettivo
@@ -361,7 +360,7 @@ with zona_dinamica.container():
             else: st.warning("Nessun iPad rilevato nel gruppo bloccato di questa classe.")
 
     else:
-        now = datetime.now()
+        now = ora_ita()
         if now >= st.session_state.expiry_time:
             blocca_classe_sicuro(st.session_state.classe_attiva)
             scrivi_log("BLOCCO_AUTOMATICO", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
