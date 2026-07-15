@@ -17,7 +17,6 @@ JAMF_URL = "https://liceosportivopd.jamfcloud.com/api"
 AUTH = (st.secrets["jamf"]["username"], st.secrets["jamf"]["password"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
-# NOME DEL TUO FOGLIO GOOGLE (Modificalo qui se lo hai chiamato diversamente su Drive)
 NOME_FOGLIO = "Log-Teacher-Safari"
 
 MAPPA_CLASSI = {
@@ -117,7 +116,6 @@ def blocca_classe_sicuro(classe_nome):
         return esegui_azione("add", ids["bloccata"], devices)
     return True
 
-# --- SCRITTURA LOG SU GOOGLE SHEETS ---
 def scrivi_log(azione, classe, docente, materia, durata=""):
     if worksheet is not None:
         try:
@@ -135,49 +133,142 @@ def scrivi_log(azione, classe, docente, materia, durata=""):
         except Exception as e:
             st.error(f"Errore durante il salvataggio del log su Google Sheets: {e}")
 
-# --- LETTURA SESSIONI CONDIVISE DA GOOGLE SHEETS ---
-def ottieni_sessioni_attive_globali():
+# --- CONTROLLO GLOBALE SCADENZE PENDENTI (AUTO-HEALING) ---
+def esegui_pulizia_scadenze():
     if worksheet is None:
-        return []
-    
+        return
     try:
         records = worksheet.get_all_records()
-        if not records:
-            return []
-            
-        df_log = pd.DataFrame(records)
-        oggi = ora_ita().strftime("%d/%m/%Y")
-        df_oggi = df_log[df_log['Data'] == oggi]
+        if not records: return
         
-        if df_oggi.empty:
-            return []
+        df_log = pd.DataFrame(records)
+        df_log.columns = df_log.columns.str.strip()
+        
+        oggi = ora_ita().strftime("%d/%m/%Y")
+        if 'Data' not in df_log.columns: return
+        
+        df_oggi = df_log[df_log['Data'].astype(str).str.strip() == oggi]
+        if df_oggi.empty: return
             
         ultime_azioni = df_oggi.sort_values(by=['Ora_Reale']).groupby('Classe').last()
+        ora_attuale = ora_ita()
         
+        for classe, row in ultime_azioni.iterrows():
+            if str(row.get('Azione', '')).strip() == 'SBLOCCO':
+                try:
+                    ora_str = str(row['Ora_Reale']).strip()
+                    if len(ora_str.split(':')) == 2: ora_str += ":00"
+                    
+                    ora_inizio = datetime.strptime(f"{oggi} {ora_str}", "%d/%m/%Y %H:%M:%S")
+                    ora_inizio = ora_inizio.replace(tzinfo=zoneinfo.ZoneInfo("Europe/Rome"))
+                    
+                    durata = int(pd.to_numeric(row.get('Durata_Minuti', 0), errors='coerce') or 0)
+                    if durata > 0:
+                        ora_fine = ora_inizio + timedelta(minutes=durata)
+                        if ora_attuale >= ora_fine:
+                            blocca_classe_sicuro(classe)
+                            scrivi_log("BLOCCO_AUTOMATICO", classe, row.get('Docente', ''), row.get('Materia', ''))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+# --- RECUPERO SESSIONE CORRENTE (REFRESH-RESISTANCE) ---
+def recupera_sessione_attiva_corrente(docente):
+    if worksheet is None: return None
+    try:
+        records = worksheet.get_all_records()
+        if not records: return None
+        
+        df_log = pd.DataFrame(records)
+        df_log.columns = df_log.columns.str.strip()
+        
+        oggi = ora_ita().strftime("%d/%m/%Y")
+        if 'Data' not in df_log.columns or 'Docente' not in df_log.columns: return None
+        
+        df_oggi_docente = df_log[
+            (df_log['Data'].astype(str).str.strip() == oggi) & 
+            (df_log['Docente'].astype(str).str.strip().str.lower() == docente.strip().lower())
+        ]
+        
+        if df_oggi_docente.empty: return None
+            
+        ultima_riga = df_oggi_docente.sort_values(by=['Ora_Reale']).iloc[-1]
+        
+        if str(ultima_riga.get('Azione', '')).strip() == 'SBLOCCO':
+            try:
+                ora_str = str(ultima_riga['Ora_Reale']).strip()
+                if len(ora_str.split(':')) == 2: ora_str += ":00"
+                
+                ora_inizio = datetime.strptime(f"{oggi} {ora_str}", "%d/%m/%Y %H:%M:%S")
+                ora_inizio = ora_inizio.replace(tzinfo=zoneinfo.ZoneInfo("Europe/Rome"))
+                
+                durata = int(pd.to_numeric(ultima_riga.get('Durata_Minuti', 0), errors='coerce') or 0)
+                if durata > 0:
+                    ora_fine = ora_inizio + timedelta(minutes=durata)
+                    ora_attuale = ora_ita()
+                    
+                    if ora_fine > ora_attuale:
+                        return {
+                            "classe": ultima_riga.get('Classe', ''),
+                            "materia": ultima_riga.get('Materia', ''),
+                            "expiry_time": ora_fine,
+                            "total_duration_secs": durata * 60
+                        }
+            except Exception:
+                pass
+        return None
+    except Exception:
+        return None
+
+# --- LETTURA SESSIONI CONDIVISE DA GOOGLE SHEETS (CON CACHE) ---
+@st.cache_data(ttl=20)
+def ottieni_sessioni_attive_globali_cached():
+    if worksheet is None: return []
+    try:
+        records = worksheet.get_all_records()
+        if not records: return []
+            
+        df_log = pd.DataFrame(records)
+        df_log.columns = df_log.columns.str.strip()
+        
+        if 'Data' not in df_log.columns: return []
+
+        oggi = ora_ita().strftime("%d/%m/%Y")
+        df_oggi = df_log[df_log['Data'].astype(str).str.strip() == oggi]
+        
+        if df_oggi.empty: return []
+            
+        ultime_azioni = df_oggi.sort_values(by=['Ora_Reale']).groupby('Classe').last()
         sessioni_attive = []
         ora_attuale = ora_ita()
         
         for classe, row in ultime_azioni.iterrows():
-            if row['Azione'] == 'SBLOCCO':
+            if str(row.get('Azione', '')).strip() == 'SBLOCCO':
                 try:
-                    ora_inizio = datetime.strptime(f"{oggi} {row['Ora_Reale']}", "%d/%m/%Y %H:%M:%S")
+                    ora_str = str(row['Ora_Reale']).strip()
+                    if len(ora_str.split(':')) == 2: ora_str += ":00"
+                        
+                    ora_inizio = datetime.strptime(f"{oggi} {ora_str}", "%d/%m/%Y %H:%M:%S")
                     ora_inizio = ora_inizio.replace(tzinfo=zoneinfo.ZoneInfo("Europe/Rome"))
                     
-                    durata = int(row['Durata_Minuti'])
-                    ora_fine = ora_inizio + timedelta(minutes=durata)
-                    
-                    if ora_fine > ora_attuale:
-                        str_inizio = ora_inizio.strftime("%H:%M")
-                        str_fine = ora_fine.strftime("%H:%M")
-                        sessioni_attive.append(f"📍 {row['Docente']} ha sbloccato la {classe} dalle {str_inizio} alle {str_fine}.")
-                except (ValueError, KeyError, TypeError):
+                    durata = int(pd.to_numeric(row.get('Durata_Minuti', 0), errors='coerce') or 0)
+                    if durata > 0:
+                        ora_fine = ora_inizio + timedelta(minutes=durata)
+                        
+                        if ora_fine > ora_attuale:
+                            str_inizio = ora_inizio.strftime("%H:%M")
+                            str_fine = ora_fine.strftime("%H:%M")
+                            docente = row.get('Docente', 'Sconosciuto')
+                            sessioni_attive.append(f"📍 **{docente}** ha sbloccato la **{classe}** dalle {str_inizio} alle {str_fine}.")
+                except Exception:
                     continue
         
         return sessioni_attive
     except Exception:
         return []
 
-# --- 5. CARICAMENTO E PULIZIA DATI ---
+# --- 5. CARICAMENTO E PULIZIA DATI LOCALI ---
 if os.path.exists('orario.csv'):
     df = pd.read_csv('orario.csv', encoding='utf-8')
     df.columns = df.columns.str.strip()
@@ -209,7 +300,29 @@ if param_docente:
 else:
     proprietario = st.selectbox("Seleziona il tuo Profilo (Modalità Test Locale):", lista_docenti)
 
-# --- 7. LOGICA AUTO-COMPILAZIONE ---
+# --- GESTIONE SINCRONIZZAZIONE STATO DAL DB ---
+if "ultimo_docente" not in st.session_state:
+    st.session_state.ultimo_docente = proprietario
+
+if st.session_state.ultimo_docente != proprietario:
+    st.session_state.ultimo_docente = proprietario
+    st.session_state.db_synced = False
+
+if "db_synced" not in st.session_state or not st.session_state.db_synced:
+    with st.spinner("Sincronizzazione in corso con il database di istituto..."):
+        esegui_pulizia_scadenze()
+        sessione_db = recupera_sessione_attiva_corrente(proprietario)
+        if sessione_db:
+            st.session_state.expiry_time = sessione_db["expiry_time"]
+            st.session_state.total_duration_secs = sessione_db["total_duration_secs"]
+            st.session_state.classe_attiva = sessione_db["classe"]
+            st.session_state.docente_effettivo = proprietario
+            st.session_state.materia_effettiva = sessione_db["materia"]
+        else:
+            st.session_state.expiry_time = None
+        st.session_state.db_synced = True
+
+# --- 7. LOGICA AUTO-COMPILAZIONE DA ORARIO ---
 ora_scolastica_attuale = determina_ora_scolastica()
 giorni_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
 giorno_oggi = giorni_it[ora_ita().weekday()]
@@ -225,14 +338,11 @@ if ora_scolastica_attuale is not None:
     ]
     if not lezione_attuale.empty:
         c_suggerita = str(lezione_attuale.iloc[0]['Classe']).strip()
-        if c_suggerita in MAPPA_CLASSI:
-            classe_suggerita = c_suggerita
+        if c_suggerita in MAPPA_CLASSI: classe_suggerita = c_suggerita
         sigla_orario = str(lezione_attuale.iloc[0]['Materia']).strip()
         materia_suggerita = formatta_materia(sigla_orario)
 
 # --- 8. STATO E CSS DINAMICO ---
-if "expiry_time" not in st.session_state: st.session_state.expiry_time = None
-
 css_style = """
 <style>
 div[data-testid="stStatusWidget"] { visibility: hidden !important; display: none !important; }
@@ -240,82 +350,61 @@ footer {visibility: hidden !important;}
 div[data-testid="stDeployButton"] {display:none !important;}
 div[data-testid="stToolbarAction"] {display:none !important;}
 div[data-testid="stMainMenu"] {display:none !important;}
+</style>
 """
-
 if st.session_state.expiry_time is not None:
     css_style += """
-    button[kind="primary"] {
-        background-color: #0068c9 !important;
-        border-color: #0068c9 !important;
-        color: white !important;
-    }
+    <style>
+    button[kind="primary"] { background-color: #0068c9 !important; border-color: #0068c9 !important; color: white !important; }
+    </style>
     """
-
-css_style += "</style>"
 st.markdown(css_style, unsafe_allow_html=True)
 
 # --- 9. INTERFACCIA PRINCIPALE ---
 st.title("🔐 Teacher Jamf • Safari 🦏")
 st.caption(f"Accesso effettuato come: **{proprietario}**")
 
-# --- PANNELLO CONDIVISO: SESSIONI ATTIVE ISTITUTO ---
-sessioni_globali = ottieni_sessioni_attive_globali()
+# --- PANNELLO CONDIVISO ---
+sessioni_globali = ottieni_sessioni_attive_globali_cached()
 if sessioni_globali:
     with st.expander("🌐 Sessioni Safari sbloccate in questo momento nell'istituto", expanded=True):
         for s in sessioni_globali:
-            st.write(s)
+            st.markdown(s)
 
 st.markdown("---")
 
 # --- 10. SIDEBAR AMMINISTRATORE ---
 with st.sidebar:
     st.header("⚙️ Amministrazione")
-    
     password_inserita = st.text_input("Password Amministratore:", type="password")
 
     if "ADMIN_PASSWORD" not in st.secrets:
-        st.error("⚠️ La password amministratore non è ancora stata letta correttamente dal Cloud.")
-    else:
-        if password_inserita == st.secrets["ADMIN_PASSWORD"]:
-            st.success("Accesso amministratore effettuato!")
-            
-            st.subheader("📊 Esportazione Registro")
-            if worksheet is not None:
-                try:
-                    records = worksheet.get_all_values()
-                    if len(records) > 1: 
-                        output = io.StringIO()
-                        writer = csv.writer(output)
-                        writer.writerows(records)
-                        csv_data = output.getvalue()
-                        
-                        st.download_button(
-                            "📥 Scarica log_utilizzi.csv", 
-                            csv_data, 
-                            "log_utilizzi.csv", 
-                            "text/csv", 
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("Nessun dato registrato nel log su Google Sheets.")
-                except Exception as e:
-                    st.error(f"Errore nel recupero del log online: {e}")
-            else:
-                st.info("Connessione a Google Sheets non disponibile.")
-                
-            st.markdown("---")
-            
-            if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
-                with st.spinner("Sincronizzazione in corso..."):
-                    for nome, ids in MAPPA_CLASSI.items():
-                        devs = recupera_dispositivi_in_gruppo(ids["libera"])
-                        if devs:
-                            esegui_azione("remove", ids["libera"], devs)
-                            esegui_azione("add", ids["bloccata"], devs)
-                    st.success("Gruppi ripristinati correttamente.")
-                    
-        elif password_inserita:
-            st.error("Password errata.")
+        st.error("⚠️ Password amministratore mancante nel Cloud.")
+    elif password_inserita == st.secrets["ADMIN_PASSWORD"]:
+        st.success("Accesso effettuato!")
+        st.subheader("📊 Esportazione Registro")
+        if worksheet is not None:
+            try:
+                records = worksheet.get_all_values()
+                if len(records) > 1: 
+                    output = io.StringIO()
+                    csv.writer(output).writerows(records)
+                    st.download_button("📥 Scarica log_utilizzi.csv", output.getvalue(), "log_utilizzi.csv", "text/csv", use_container_width=True)
+                else:
+                    st.info("Nessun dato registrato.")
+            except Exception as e:
+                st.error(f"Errore: {e}")
+        st.markdown("---")
+        if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
+            with st.spinner("Sincronizzazione in corso..."):
+                for nome, ids in MAPPA_CLASSI.items():
+                    devs = recupera_dispositivi_in_gruppo(ids["libera"])
+                    if devs:
+                        esegui_azione("remove", ids["libera"], devs)
+                        esegui_azione("add", ids["bloccata"], devs)
+                st.success("Gruppi ripristinati correttamente.")
+    elif password_inserita:
+        st.error("Password errata.")
             
 # --- 11. GESTIONE PANNELLI INTERFACCIA ---
 zona_dinamica = st.empty()
@@ -337,7 +426,6 @@ with zona_dinamica.container():
             mat_effettiva = st.text_input("Specifica Materia:", key="mat_altro_input") if mat_sel == "Altro" else mat_sel
 
         durata = st.slider("Durata sblocco (minuti):", 1, 120, 20, step=1)
-        
         st.write("") 
         
         if st.button("🔓 SBLOCCA SAFARI", type="primary", use_container_width=True, key="btn_sblocca_final"):
@@ -354,10 +442,11 @@ with zona_dinamica.container():
                         st.session_state.materia_effettiva = mat_effettiva
                         
                         scrivi_log("SBLOCCO", classe_sel, doc_effettivo, mat_effettiva, durata)
+                        ottieni_sessioni_attive_globali_cached.clear() # Svuota la cache in modo mirato
                         st.rerun()
-                    else: st.error("Errore API: Impossibile aggiungere al gruppo 'libera'.")
-                else: st.error("Errore API: Impossibile rimuovere dal gruppo 'bloccata'.")
-            else: st.warning("Nessun iPad rilevato nel gruppo bloccato di questa classe.")
+                    else: st.error("Errore API (add libera).")
+                else: st.error("Errore API (remove bloccata).")
+            else: st.warning("Nessun iPad rilevato nel gruppo bloccato.")
 
     else:
         now = ora_ita()
@@ -365,15 +454,18 @@ with zona_dinamica.container():
             blocca_classe_sicuro(st.session_state.classe_attiva)
             scrivi_log("BLOCCO_AUTOMATICO", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
             st.session_state.expiry_time = None
+            st.session_state.db_synced = False
+            ottieni_sessioni_attive_globali_cached.clear()
             st.rerun()
             
         rimanente = st.session_state.expiry_time - now
         secondi_totali = int(rimanente.total_seconds())
         durata_totale = st.session_state.get("total_duration_secs", secondi_totali)
         
-        st.info(f"🏫 Sessione attiva in **{st.session_state.classe_attiva}** | Insegnante: **{st.session_state.docente_effettivo}** | Lezione: **{st.session_state.materia_effettiva}**")
+        st.info(f"🏫 **{st.session_state.classe_attiva}** | 👨‍🏫 **{st.session_state.docente_effettivo}** | 📚 **{st.session_state.materia_effettiva}**")
         
-        st.markdown(f"### ⏳ Tempo rimanente: **{secondi_totali // 60}m {secondi_totali % 60}s**")
+        # Miglioramento UI Timer
+        st.markdown(f"<h2 style='text-align: center; color: #ff4b4b;'>⏳ {secondi_totali // 60:02d}:{secondi_totali % 60:02d}</h2>", unsafe_allow_html=True)
         
         percentuale_residua = max(0.0, min(1.0, secondi_totali / durata_totale)) if durata_totale > 0 else 0.0
         st.progress(percentuale_residua)
@@ -383,7 +475,12 @@ with zona_dinamica.container():
             blocca_classe_sicuro(st.session_state.classe_attiva)
             scrivi_log("BLOCCO_MANUALE", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
             st.session_state.expiry_time = None
+            st.session_state.db_synced = False
+            ottieni_sessioni_attive_globali_cached.clear()
             st.rerun()
             
         time.sleep(1)
-        st.rerun()
+        try:
+            st.rerun()
+        except Exception:
+            pass # Previene falsi errori in console durante il refresh forzato
