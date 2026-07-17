@@ -1,24 +1,19 @@
-
 import streamlit as st
 import pandas as pd
 import requests
 import time
 import csv
-import io  # <-- NUOVO: per l'esportazione dinamica del CSV
-import gspread  # <-- NUOVO: per la connessione a Google Sheets
 from datetime import datetime, timedelta, time as dt_time
 import os
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Teacher Jamf • Safari", page_icon="🔐", initial_sidebar_state="collapsed")
 
-# --- 2. CONFIGURAZIONE API, GOOGLE SHEETS E FILE ---
+# --- 2. CONFIGURAZIONE API E FILE ---
 JAMF_URL = "https://liceosportivopd.jamfcloud.com/api"
 AUTH = (st.secrets["jamf"]["username"], st.secrets["jamf"]["password"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
-
-# 📝 NOME DEL TUO FOGLIO GOOGLE (Modificalo qui se lo hai chiamato diversamente su Drive)
-NOME_FOGLIO = "Log-Teacher-Safari"
+FILE_LOG = "log_utilizzi.csv"
 
 MAPPA_CLASSI = {
     "IA":   {"bloccata": 9,  "libera": 10},
@@ -52,30 +47,6 @@ def formatta_materia(sigla):
     if nome_esteso:
         return f"{nome_esteso} · {sigla.strip()}"
     return sigla.strip()
-
-
-# --- NUOVA SEZIONE: CONNESSIONE APERTA UNA SOLA VOLTA (CACHE) ---
-@st.cache_resource
-def inizializza_connessione_sheets():
-    """Si connette a Google Sheets una sola volta all'avvio usando i Secrets."""
-    try:
-        gc = gspread.service_account_from_dict(st.secrets["gspread"])
-        sh = gc.open(NOME_FOGLIO)
-        ws = sh.get_worksheet(0)  # Primo pannello del foglio
-        
-        # Se il foglio è completamente vuoto, crea la riga di intestazione
-        if len(ws.get_all_values()) == 0:
-            intestazioni = ["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"]
-            ws.append_row(intestazioni)
-            
-        return ws
-    except Exception as e:
-        st.error(f"Impossibile connettersi a Google Sheets: {e}")
-        return None
-
-# Avvia la connessione globale
-worksheet = inizializza_connessione_sheets()
-
 
 # --- 3. DETERMINAZIONE FASCIA ORARIA ---
 def determina_ora_scolastica():
@@ -116,38 +87,22 @@ def blocca_classe_sicuro(classe_nome):
         return esegui_azione("add", ids["bloccata"], devices)
     return True
 
-
-# --- MODIFICATO: SCRITTURA LOG DIRETTAMENTE SU GOOGLE SHEETS ---
 def scrivi_log(azione, classe, docente, materia, durata=""):
-    if worksheet is not None:
-        try:
-            now = datetime.now()
-            nuova_riga = [
-                now.strftime("%d/%m/%Y"), 
-                now.strftime("%H:%M:%S"), 
-                azione, 
-                classe, 
-                docente, 
-                materia, 
-                str(durata)
-            ]
-            worksheet.append_row(nuova_riga)
-        except Exception as e:
-            st.error(f"Errore durante il salvataggio del log su Google Sheets: {e}")
+    file_exists = os.path.isfile(FILE_LOG)
+    with open(FILE_LOG, "a", newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"])
+        now = datetime.now()
+        writer.writerow([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
 
-
-# --- MODIFICATO: LETTURA SESSIONI CONDIVISE DA GOOGLE SHEETS ---
+# --- NUOVA FUNZIONE: LETTURA SESSIONI ATTIVE CONDIVISE ---
 def ottieni_sessioni_attive_globali():
-    if worksheet is None:
+    if not os.path.exists(FILE_LOG):
         return []
     
     try:
-        # Recupera tutti i dati dal foglio in formato dizionario
-        records = worksheet.get_all_records()
-        if not records:
-            return []
-            
-        df_log = pd.DataFrame(records)
+        df_log = pd.read_csv(FILE_LOG)
         oggi = datetime.now().strftime("%d/%m/%Y")
         df_oggi = df_log[df_log['Data'] == oggi]
         
@@ -170,8 +125,9 @@ def ottieni_sessioni_attive_globali():
                     if ora_fine > ora_attuale:
                         str_inizio = ora_inizio.strftime("%H:%M")
                         str_fine = ora_fine.strftime("%H:%M")
+                        # Formattazione esatta richiesta: "📍 Rossi ha sbloccato la IA dalle 11:05 alle 11:30."
                         sessioni_attive.append(f"📍 {row['Docente']} ha sbloccato la {classe} dalle {str_inizio} alle {str_fine}.")
-                except (ValueError, KeyError, TypeError):
+                except ValueError:
                     continue
         
         return sessioni_attive
@@ -192,22 +148,24 @@ if os.path.exists('orario.csv'):
     lista_classi = sorted([c for c in df['Classe'].unique().tolist() if c in MAPPA_CLASSI])
     lista_docenti = ["Altro"]
     if 'Docente' in df.columns: 
-        lista_docenti = sorted(df['Docente'].dropna().unique().tolist()) + ["Altro"]
+        lista_docenti = sorted([d for d in df['Docente'].dropna().unique().tolist() if d.strip() not in ("", "-")]) + ["Altro"]
     
     lista_materie_display = ["Altro"]
     if 'Materia' in df.columns:
-        sigle_raw = sorted(df['Materia'].dropna().unique().tolist())
+        sigle_raw = sorted([m for m in df['Materia'].dropna().unique().tolist() if m.strip() not in ("", "-")])
         lista_materie_display = [formatta_materia(s) for s in sigle_raw] + ["Altro"]
 else:
-    st.error("File 'orario1.csv' non trovato.")
+    st.error("File 'orario.csv' non trovato.")
     st.stop()
 
 # --- 6. IDENTIFICAZIONE DOCENTE (URL PAYLOAD JAMF O FALLBACK) ---
+# Legge l'URL: es. https://liceo.streamlit.app/?docente=Benetti
 param_docente = st.query_params.get("docente", None)
 
 if param_docente:
     proprietario = param_docente
 else:
+    # Se non c'è parametro URL (es. test sul Mac), usiamo un selettore fittizio
     proprietario = st.selectbox("Seleziona il tuo Profilo (Modalità Test Locale):", lista_docenti)
 
 # --- 7. LOGICA AUTO-COMPILAZIONE ---
@@ -271,54 +229,26 @@ st.markdown("---")
 # --- 10. SIDEBAR AMMINISTRATORE ---
 with st.sidebar:
     st.header("⚙️ Amministrazione")
-    
-    password_inserita = st.text_input("Password Amministratore:", type="password")
+    if st.text_input("Password di sistema:", type="password") == st.secrets["admin"]["password"]:
+        st.success("Accesso Amministratore")
+        
+        st.subheader("📊 Esportazione Registro")
+        if os.path.exists(FILE_LOG):
+            with open(FILE_LOG, "r", encoding="utf-8") as f:
+                st.download_button("📥 Scarica log_utilizzi.csv", f, "log_utilizzi.csv", "text/csv", use_container_width=True)
+        else:
+            st.info("Nessun dato registrato nel log.")
+            
+        st.markdown("---")
+        if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
+            with st.spinner("Sincronizzazione in corso..."):
+                for nome, ids in MAPPA_CLASSI.items():
+                    devs = recupera_dispositivi_in_gruppo(ids["libera"])
+                    if devs:
+                        esegui_azione("remove", ids["libera"], devs)
+                        esegui_azione("add", ids["bloccata"], devs)
+            st.success("Gruppi ripristinati correttamente.")
 
-    if "ADMIN_PASSWORD" not in st.secrets:
-        st.error("⚠️ La password amministratore non è ancora stata letta correttamente dal Cloud.")
-    else:
-        if password_inserita == st.secrets["ADMIN_PASSWORD"]:
-            st.success("Accesso amministratore effettuato!")
-            
-            # --- MODIFICATO: ESPORTAZIONE REGISTRO DA GOOGLE SHEETS IN TEMPO REALE ---
-            st.subheader("📊 Esportazione Registro")
-            if worksheet is not None:
-                try:
-                    records = worksheet.get_all_values()
-                    if len(records) > 1:  # Almeno intestazione + una riga di dati
-                        output = io.StringIO()
-                        writer = csv.writer(output)
-                        writer.writerows(records)
-                        csv_data = output.getvalue()
-                        
-                        st.download_button(
-                            "📥 Scarica log_utilizzi.csv", 
-                            csv_data, 
-                            "log_utilizzi.csv", 
-                            "text/csv", 
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("Nessun dato registrato nel log su Google Sheets.")
-                except Exception as e:
-                    st.error(f"Errore nel recupero del log online: {e}")
-            else:
-                st.info("Connessione a Google Sheets non disponibile.")
-                
-            st.markdown("---")
-            
-            if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
-                with st.spinner("Sincronizzazione in corso..."):
-                    for nome, ids in MAPPA_CLASSI.items():
-                        devs = recupera_dispositivi_in_gruppo(ids["libera"])
-                        if devs:
-                            esegui_azione("remove", ids["libera"], devs)
-                            esegui_azione("add", ids["bloccata"], devs)
-                    st.success("Gruppi ripristinati correttamente.")
-                    
-        elif password_inserita:
-            st.error("Password errata.")
-            
 # --- 11. GESTIONE PANNELLI INTERFACCIA ---
 zona_dinamica = st.empty()
 
@@ -329,6 +259,8 @@ with zona_dinamica.container():
         
         col1, col2 = st.columns(2)
         with col1:
+            # Anche se il proprietario è letto dall'URL, lo mettiamo di default nella selectbox
+            # nel caso volesse sbloccare per conto di un collega assente
             idx_doc = lista_docenti.index(proprietario) if proprietario in lista_docenti else 0
             doc_sel = st.selectbox("Docente responsabile:", lista_docenti, index=idx_doc)
             doc_effettivo = st.text_input("Specifica Cognome:", key="doc_altro_input") if doc_sel == "Altro" else doc_sel

@@ -23,12 +23,12 @@ giovedì,IA,3,Quarta,SN
 giovedì,IA,4,Gambarin,MAT
 giovedì,IA,5,Vettorazzo,ING
 giovedì,IA,6,Granziero,DS
-venedì,IA,1,Gambarin,MAT
-venedì,IA,2,Gambarin,FIS
-venedì,IA,3,Zanella,S&G
-venedì,IA,4,Granziero,SM
-venedì,IA,5,Granziero,SM
-venedì,IA,6,Granziero,SM
+venerdì,IA,1,Gambarin,MAT
+venerdì,IA,2,Gambarin,FIS
+venerdì,IA,3,Zanella,S&G
+venerdì,IA,4,Granziero,SM
+venerdì,IA,5,Granziero,SM
+venerdì,IA,6,Granziero,SM
 lunedì,IIA,1,Quarta,SN
 lunedì,IIA,2,Maricchio,MAT
 lunedì,IIA,3,Granziero,DS
@@ -53,12 +53,12 @@ giovedì,IIA,3,De Filippis,ITA
 giovedì,IIA,4,De Filippis,S&G
 giovedì,IIA,5,Granziero,DS
 giovedì,IIA,6,Quarta,SN
-venedì,IIA,1,Maricchio,MAT
-venedì,IIA,2,Maricchio,FIS
-venedì,IIA,3,Quarta,SN
-venedì,IIA,4,Vettorazzo,ING
-venedì,IIA,5,De Filippis,S&G
-venedì,IIA,6,De Filippis,ITA
+venerdì,IIA,1,Maricchio,MAT
+venerdì,IIA,2,Maricchio,FIS
+venerdì,IIA,3,Quarta,SN
+venerdì,IIA,4,Vettorazzo,ING
+venerdì,IIA,5,De Filippis,S&G
+venerdì,IIA,6,De Filippis,ITA
 lunedì,IIIA,1,De Filippis,ITA
 lunedì,IIIA,2,Benetello,EC
 lunedì,IIIA,3,Quarta,SN
@@ -83,12 +83,12 @@ giovedì,IIIA,3,Benetti,MAT
 giovedì,IIIA,4,Benetello,D&E
 giovedì,IIIA,5,Benetti,FIS
 giovedì,IIIA,6,Vettorazzo,ING
-venedì,IIIA,1,De Filippis,ITA
-venedì,IIIA,2,De Filippis,ITA
-venedì,IIIA,3,Vecchiato,DS
-venedì,IIIA,4,Benetti,MAT
-venedì,IIIA,5,Benetti,FIS
-venedì,IIIA,6,Ferri,STO
+venerdì,IIIA,1,De Filippis,ITA
+venerdì,IIIA,2,De Filippis,ITA
+venerdì,IIIA,3,Vecchiato,DS
+venerdì,IIIA,4,Benetti,MAT
+venerdì,IIIA,5,Benetti,FIS
+venerdì,IIIA,6,Ferri,STO
 lunedì,IIIB,1,Benetello,EC
 lunedì,IIIB,2,De Filippis,ITA
 lunedì,IIIB,3,Vecchiato,DS
@@ -113,12 +113,12 @@ giovedì,IIIB,3,Ferri,FIL
 giovedì,IIIB,4,Benetti,MAT
 giovedì,IIIB,5,Quarta,SN
 giovedì,IIIB,6,Benetti,FIS
-venedì,IIIB,1,Benetti,MAT
-venedì,IIIB,2,Benetti,FIS
-venedì,IIIB,3,De Filippis,ITA
-venedì,IIIB,4,Quarta,SN
-venedì,IIIB,5,Ferri,STO
-venedì,IIIB,6,Vettorazzo,ING
+venerdì,IIIB,1,Benetti,MAT
+venerdì,IIIB,2,Benetti,FIS
+venerdì,IIIB,3,De Filippis,ITA
+venerdì,IIIB,4,Quarta,SN
+venerdì,IIIB,5,Ferri,STO
+venerdì,IIIB,6,Vettorazzo,ING
 lunedì,IVA,1,Maricchio,MAT
 lunedì,IVA,2,Vecchiato,DS
 lunedì,IVA,3,Ferri,FIL
@@ -143,12 +143,12 @@ giovedì,IVA,3,Maricchio,MAT
 giovedì,IVA,4,Vecchiato,SM
 giovedì,IVA,5,Vecchiato,SM
 giovedì,IVA,6,Vecchiato,SM
-venedì,IVA,1,Zanella,ITA
-venedì,IVA,2,Quarta,SN
-venedì,IVA,3,Maricchio,MAT
-venedì,IVA,4,Ferri,STO
-venedì,IVA,5,Vettorazzo,ING
-venedì,IVA,6,Maricchio,FIS
+venerdì,IVA,1,Zanella,ITA
+venerdì,IVA,2,Quarta,SN
+venerdì,IVA,3,Maricchio,MAT
+venerdì,IVA,4,Ferri,STO
+venerdì,IVA,5,Vettorazzo,ING
+venerdì,IVA,6,Maricchio,FIS
 lunedì,IVB,1,Vecchiato,DS
 lunedì,IVB,2,Ferri,FIL
 lunedì,IVB,3,Maricchio,MAT
@@ -173,12 +173,12 @@ giovedì,IVB,3,Benetello,D&E
 giovedì,IVB,4,Vecchiato,SM
 giovedì,IVB,5,Vecchiato,SM
 giovedì,IVB,6,Vecchiato,SM
-venedì,IVB,1,Quarta,SN
-venedì,IVB,2,Zanella,ITA
-venedì,IVB,3,Ferri,STO
-venedì,IVB,4,Maricchio,MAT
-venedì,IVB,5,Maricchio,FIS
-venedì,IVB,6,Benetello,D&E
+venerdì,IVB,1,Quarta,SN
+venerdì,IVB,2,Zanella,ITA
+venerdì,IVB,3,Ferri,STO
+venerdì,IVB,4,Maricchio,MAT
+venerdì,IVB,5,Maricchio,FIS
+venerdì,IVB,6,Benetello,D&E
 lunedì,VA,1,Gambarin,MAT
 lunedì,VA,2,Zanella,ITA
 lunedì,VA,3,Vettorazzo,ING
@@ -203,12 +203,12 @@ giovedì,VA,3,Gambarin,FIS
 giovedì,VA,4,Ferri,FIL
 giovedì,VA,5,Ferri,STO
 giovedì,VA,6,Benetello,EC
-venedì,VA,1,Benetello,D&E
-venedì,VA,2,Benetello,D&E
-venedì,VA,3,Vettorazzo,ING
-venedì,VA,4,Gambarin,FIS
-venedì,VA,5,Vecchiato,DS
-venedì,VA,6,Quarta,SN
+venerdì,VA,1,Benetello,D&E
+venerdì,VA,2,Benetello,D&E
+venerdì,VA,3,Vettorazzo,ING
+venerdì,VA,4,Gambarin,FIS
+venerdì,VA,5,Vecchiato,DS
+venerdì,VA,6,Quarta,SN
 lunedì,VB,1,Vettorazzo,ING
 lunedì,VB,2,Gambarin,MAT
 lunedì,VB,3,Zanella,ITA
@@ -233,9 +233,9 @@ giovedì,VB,3,Vecchiato,DS
 giovedì,VB,4,Zanella,ITA
 giovedì,VB,5,Zanella,ITA
 giovedì,VB,6,Ferri,STO
-venedì,VB,1,Ferri,FIL
-venedì,VB,2,Vettorazzo,ING
-venedì,VB,3,Benetello,D&E
-venedì,VB,4,Benetello,D&E
-venedì,VB,5,Gambarin,MAT
-venedì,VB,6,Gambarin,FIS
+venerdì,VB,1,Ferri,FIL
+venerdì,VB,2,Vettorazzo,ING
+venerdì,VB,3,Benetello,D&E
+venerdì,VB,4,Benetello,D&E
+venerdì,VB,5,Gambarin,MAT
+venerdì,VB,6,Gambarin,FIS
