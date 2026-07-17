@@ -110,6 +110,11 @@ def get_gsheet():
         sheet.append_row(COLONNE_LOG)
     return sheet
 
+@st.cache_data(ttl=15, show_spinner=False)
+def leggi_log_cache():
+    """Legge i record del foglio, riusando il risultato per 15s per non superare le quote di lettura di Google."""
+    return get_gsheet().get_all_records()
+
 def scrivi_log(azione, classe, docente, materia, durata=""):
     try:
         sheet = get_gsheet()
@@ -121,8 +126,7 @@ def scrivi_log(azione, classe, docente, materia, durata=""):
 # --- NUOVA FUNZIONE: LETTURA SESSIONI ATTIVE CONDIVISE ---
 def ottieni_sessioni_attive_globali():
     try:
-        sheet = get_gsheet()
-        records = sheet.get_all_records()
+        records = leggi_log_cache()
         if not records:
             return []
 
@@ -258,7 +262,7 @@ with st.sidebar:
         
         st.subheader("📊 Esportazione Registro")
         try:
-            records = get_gsheet().get_all_records()
+            records = leggi_log_cache()
             if records:
                 csv_buffer = io.StringIO()
                 pd.DataFrame(records).to_csv(csv_buffer, index=False)
@@ -271,7 +275,7 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📈 Grafici di utilizzo")
         try:
-            records = get_gsheet().get_all_records()
+            records = leggi_log_cache()
             df_sblocchi = pd.DataFrame(records)
             df_sblocchi = df_sblocchi[df_sblocchi.get('Azione') == 'SBLOCCO'] if not df_sblocchi.empty else df_sblocchi
             if not df_sblocchi.empty:
