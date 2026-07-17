@@ -17,7 +17,7 @@ AUTH = (st.secrets["jamf"]["username"], st.secrets["jamf"]["password"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 GOOGLE_SHEET_NAME = "Log-Teacher-Safari"
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-COLONNE_LOG = ["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"]
+COLONNE_LOG = ["Data", "Ora", "Azione", "Classe", "Docente", "Materia", "Durata"]
 
 MAPPA_CLASSI = {
     "IA":   {"bloccata": 9,  "libera": 10},
@@ -95,7 +95,7 @@ def blocca_classe_sicuro(classe_nome):
 def get_gsheet():
     """Apre (una sola volta per processo) il foglio 'Log-Teacher-Safari' e restituisce il primo worksheet."""
     creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=GOOGLE_SCOPES
+        st.secrets["gspread"], scopes=GOOGLE_SCOPES
     )
     client = gspread.authorize(creds)
     sheet = client.open(GOOGLE_SHEET_NAME).sheet1
@@ -128,7 +128,7 @@ def ottieni_sessioni_attive_globali():
             return []
             
         # Troviamo l'ultima azione registrata per ogni classe oggi
-        ultime_azioni = df_oggi.sort_values(by=['Ora_Reale']).groupby('Classe').last()
+        ultime_azioni = df_oggi.sort_values(by=['Ora']).groupby('Classe').last()
         
         sessioni_attive = []
         ora_attuale = datetime.now()
@@ -136,8 +136,8 @@ def ottieni_sessioni_attive_globali():
         for classe, row in ultime_azioni.iterrows():
             if row['Azione'] == 'SBLOCCO':
                 try:
-                    ora_inizio = datetime.strptime(f"{oggi} {row['Ora_Reale']}", "%d/%m/%Y %H:%M:%S")
-                    durata = int(row['Durata_Minuti'])
+                    ora_inizio = datetime.strptime(f"{oggi} {row['Ora']}", "%d/%m/%Y %H:%M:%S")
+                    durata = int(row['Durata'])
                     ora_fine = ora_inizio + timedelta(minutes=durata)
                     
                     if ora_fine > ora_attuale:
