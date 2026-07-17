@@ -6,7 +6,13 @@ import io
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, time as dt_time
+from zoneinfo import ZoneInfo
 import os
+
+FUSO_ORARIO = ZoneInfo("Europe/Rome")
+
+def ora_locale():
+    return datetime.now(FUSO_ORARIO)
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Teacher Jamf • Safari", page_icon="🔐", initial_sidebar_state="collapsed")
@@ -54,7 +60,7 @@ def formatta_materia(sigla):
 
 # --- 3. DETERMINAZIONE FASCIA ORARIA ---
 def determina_ora_scolastica():
-    current_time = datetime.now().time()
+    current_time = ora_locale().time()
     if dt_time(8, 0) <= current_time < dt_time(9, 0): return 1
     if dt_time(9, 0) <= current_time < dt_time(9, 55): return 2
     if dt_time(9, 55) <= current_time < dt_time(10, 50): return 3
@@ -107,7 +113,7 @@ def get_gsheet():
 def scrivi_log(azione, classe, docente, materia, durata=""):
     try:
         sheet = get_gsheet()
-        now = datetime.now()
+        now = ora_locale()
         sheet.append_row([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
     except Exception as e:
         st.warning(f"Impossibile scrivere sul registro Google Sheets: {e}")
@@ -121,7 +127,7 @@ def ottieni_sessioni_attive_globali():
             return []
 
         df_log = pd.DataFrame(records)
-        oggi = datetime.now().strftime("%d/%m/%Y")
+        oggi = ora_locale().strftime("%d/%m/%Y")
         df_oggi = df_log[df_log['Data'] == oggi]
         
         if df_oggi.empty:
@@ -131,7 +137,7 @@ def ottieni_sessioni_attive_globali():
         ultime_azioni = df_oggi.sort_values(by=['Ora']).groupby('Classe').last()
         
         sessioni_attive = []
-        ora_attuale = datetime.now()
+        ora_attuale = ora_locale()
         
         for classe, row in ultime_azioni.iterrows():
             if row['Azione'] == 'SBLOCCO':
@@ -189,7 +195,7 @@ else:
 # --- 7. LOGICA AUTO-COMPILAZIONE ---
 ora_scolastica_attuale = determina_ora_scolastica()
 giorni_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
-giorno_oggi = giorni_it[datetime.now().weekday()]
+giorno_oggi = giorni_it[ora_locale().weekday()]
 
 classe_suggerita = lista_classi[0] if lista_classi else ""
 materia_suggerita = lista_materie_display[0] if lista_materie_display else ""
@@ -321,7 +327,7 @@ with zona_dinamica.container():
                 if esegui_azione("remove", ids["bloccata"], udids):
                     time.sleep(1.5)
                     if esegui_azione("add", ids["libera"], udids):
-                        st.session_state.expiry_time = datetime.now() + timedelta(minutes=durata)
+                        st.session_state.expiry_time = ora_locale() + timedelta(minutes=durata)
                         st.session_state.total_duration_secs = durata * 60
                         st.session_state.classe_attiva = classe_sel
                         st.session_state.docente_effettivo = doc_effettivo
@@ -334,7 +340,7 @@ with zona_dinamica.container():
             else: st.warning("Nessun iPad rilevato nel gruppo bloccato di questa classe.")
 
     else:
-        now = datetime.now()
+        now = ora_locale()
         if now >= st.session_state.expiry_time:
             blocca_classe_sicuro(st.session_state.classe_attiva)
             scrivi_log("BLOCCO_AUTOMATICO", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
