@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-import csv
+import io
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta, time as dt_time
 import os
 
@@ -13,7 +15,9 @@ st.set_page_config(page_title="Teacher Jamf • Safari", page_icon="🔐", initi
 JAMF_URL = "https://liceosportivopd.jamfcloud.com/api"
 AUTH = (st.secrets["jamf"]["username"], st.secrets["jamf"]["password"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
-FILE_LOG = "log_utilizzi.csv"
+GOOGLE_SHEET_NAME = "Log-Teacher-Safari"
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+COLONNE_LOG = ["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"]
 
 MAPPA_CLASSI = {
     "IA":   {"bloccata": 9,  "libera": 10},
@@ -87,22 +91,36 @@ def blocca_classe_sicuro(classe_nome):
         return esegui_azione("add", ids["bloccata"], devices)
     return True
 
+@st.cache_resource(show_spinner=False)
+def get_gsheet():
+    """Apre (una sola volta per processo) il foglio 'Log-Teacher-Safari' e restituisce il primo worksheet."""
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=GOOGLE_SCOPES
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+    # Se il foglio è vuoto, scriviamo l'intestazione una sola volta
+    if not sheet.get_all_values():
+        sheet.append_row(COLONNE_LOG)
+    return sheet
+
 def scrivi_log(azione, classe, docente, materia, durata=""):
-    file_exists = os.path.isfile(FILE_LOG)
-    with open(FILE_LOG, "a", newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Data", "Ora_Reale", "Azione", "Classe", "Docente", "Materia", "Durata_Minuti"])
+    try:
+        sheet = get_gsheet()
         now = datetime.now()
-        writer.writerow([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
+        sheet.append_row([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
+    except Exception as e:
+        st.warning(f"Impossibile scrivere sul registro Google Sheets: {e}")
 
 # --- NUOVA FUNZIONE: LETTURA SESSIONI ATTIVE CONDIVISE ---
 def ottieni_sessioni_attive_globali():
-    if not os.path.exists(FILE_LOG):
-        return []
-    
     try:
-        df_log = pd.read_csv(FILE_LOG)
+        sheet = get_gsheet()
+        records = sheet.get_all_records()
+        if not records:
+            return []
+
+        df_log = pd.DataFrame(records)
         oggi = datetime.now().strftime("%d/%m/%Y")
         df_oggi = df_log[df_log['Data'] == oggi]
         
@@ -232,13 +250,35 @@ with st.sidebar:
     if st.text_input("Password di sistema:", type="password") == st.secrets["admin"]["password"]:
         st.success("Accesso Amministratore")
         
- #       st.subheader("📊 Esportazione Registro")
- #      if os.path.exists(FILE_LOG):
- #           with open(FILE_LOG, "r", encoding="utf-8") as f:
- #               st.download_button("📥 Scarica log_utilizzi.csv", f, "log_utilizzi.csv", "text/csv", use_container_width=True)
- #       else:
- #           st.info("Nessun dato registrato nel log.")
+        st.subheader("📊 Esportazione Registro")
+        try:
+            records = get_gsheet().get_all_records()
+            if records:
+                csv_buffer = io.StringIO()
+                pd.DataFrame(records).to_csv(csv_buffer, index=False)
+                st.download_button("📥 Scarica log_utilizzi.csv", csv_buffer.getvalue(), "log_utilizzi.csv", "text/csv", use_container_width=True)
+            else:
+                st.info("Nessun dato registrato nel log.")
+        except Exception as e:
+            st.warning(f"Impossibile leggere il registro Google Sheets: {e}")
             
+        st.markdown("---")
+        st.subheader("📈 Grafici di utilizzo")
+        try:
+            records = get_gsheet().get_all_records()
+            df_sblocchi = pd.DataFrame(records)
+            df_sblocchi = df_sblocchi[df_sblocchi.get('Azione') == 'SBLOCCO'] if not df_sblocchi.empty else df_sblocchi
+            if not df_sblocchi.empty:
+                st.caption("Numero di sblocchi per docente")
+                st.bar_chart(df_sblocchi['Docente'].value_counts())
+
+                st.caption("Numero di sblocchi per classe")
+                st.bar_chart(df_sblocchi['Classe'].value_counts())
+            else:
+                st.info("Nessuno sblocco ancora registrato.")
+        except Exception as e:
+            st.warning(f"Impossibile generare i grafici: {e}")
+
         st.markdown("---")
         if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
             with st.spinner("Sincronizzazione in corso..."):
