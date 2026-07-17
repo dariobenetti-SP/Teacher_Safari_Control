@@ -232,12 +232,12 @@ with st.sidebar:
     if st.text_input("Password di sistema:", type="password") == st.secrets["admin"]["password"]:
         st.success("Accesso Amministratore")
         
-        st.subheader("📊 Esportazione Registro")
-        if os.path.exists(FILE_LOG):
-            with open(FILE_LOG, "r", encoding="utf-8") as f:
-                st.download_button("📥 Scarica log_utilizzi.csv", f, "log_utilizzi.csv", "text/csv", use_container_width=True)
-        else:
-            st.info("Nessun dato registrato nel log.")
+ #       st.subheader("📊 Esportazione Registro")
+ #      if os.path.exists(FILE_LOG):
+ #           with open(FILE_LOG, "r", encoding="utf-8") as f:
+ #               st.download_button("📥 Scarica log_utilizzi.csv", f, "log_utilizzi.csv", "text/csv", use_container_width=True)
+ #       else:
+ #           st.info("Nessun dato registrato nel log.")
             
         st.markdown("---")
         if st.button("🔄 RIPRISTINA TUTTI I GRUPPI", use_container_width=True):
