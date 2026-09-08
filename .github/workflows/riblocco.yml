@@ -1,0 +1,30 @@
+name: Riblocco automatico Safari
+
+on:
+  schedule:
+    # GitHub Actions non garantisce puntualità esatta sul minuto, ma gira
+    # tipicamente entro pochi minuti dall'orario previsto — sufficiente per questo scopo.
+    - cron: "*/2 * * * *"
+  workflow_dispatch: {}  # permette anche l'avvio manuale dalla tab "Actions" di GitHub
+
+jobs:
+  riblocco:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Imposta Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installa dipendenze
+        run: pip install requests gspread google-auth
+
+      - name: Esegui riblocco automatico
+        env:
+          JAMF_USERNAME: ${{ secrets.JAMF_USERNAME }}
+          JAMF_PASSWORD: ${{ secrets.JAMF_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python riblocco_automatico.py
