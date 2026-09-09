@@ -87,15 +87,20 @@ def recupera_dispositivi_in_gruppo(gruppo_id):
     except requests.RequestException: 
         return []
 
-def blocca_classe_sicuro(classe_nome):
+def blocca_classe_sicuro(classe_nome, tentativi_massimi=2):
     if classe_nome not in MAPPA_CLASSI: return False
     ids = MAPPA_CLASSI[classe_nome]
-    devices = recupera_dispositivi_in_gruppo(ids["libera"])
-    if devices:
+    for tentativo in range(1, tentativi_massimi + 1):
+        devices = recupera_dispositivi_in_gruppo(ids["libera"])
+        if not devices:
+            return True  # nessun dispositivo da spostare: non c'è nulla da fare
         esegui_azione("remove", ids["libera"], devices)
         time.sleep(1.5)
-        return esegui_azione("add", ids["bloccata"], devices)
-    return True
+        if esegui_azione("add", ids["bloccata"], devices):
+            return True
+        if tentativo < tentativi_massimi:
+            time.sleep(2)
+    return False
 
 @st.cache_resource(show_spinner=False)
 def get_gsheet():
@@ -115,13 +120,26 @@ def leggi_log_cache():
     """Legge i record del foglio, riusando il risultato per 15s per non superare le quote di lettura di Google."""
     return get_gsheet().get_all_records()
 
-def scrivi_log(azione, classe, docente, materia, durata=""):
-    try:
-        sheet = get_gsheet()
-        now = ora_locale()
-        sheet.append_row([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
-    except Exception as e:
-        st.warning(f"Impossibile scrivere sul registro Google Sheets: {e}")
+def scrivi_log(azione, classe, docente, materia, durata="", tentativi_massimi=3):
+    now = ora_locale()
+    riga = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata]
+    ultimo_errore = None
+    for tentativo in range(1, tentativi_massimi + 1):
+        try:
+            get_gsheet().append_row(riga)
+            return True
+        except Exception as e:
+            ultimo_errore = e
+            if tentativo < tentativi_massimi:
+                time.sleep(2)  # gli errori Google Sheets (es. 503) sono spesso temporanei
+    # Tutti i tentativi falliti: l'azione su Jamf è comunque avvenuta, ma non è tracciata.
+    # Il riblocco automatico non potrà vedere questa sessione: avviso chiaro, non un warning silenzioso.
+    st.error(
+        f"⚠️ ATTENZIONE: l'azione '{azione}' su {classe} è avvenuta correttamente su Jamf, ma NON è stato "
+        f"possibile registrarla nel foglio dopo {tentativi_massimi} tentativi ({ultimo_errore}). "
+        f"Il riblocco automatico potrebbe non funzionare per questa sessione — avvisa l'amministratore."
+    )
+    return False
 
 # --- NUOVA FUNZIONE: LETTURA SESSIONI ATTIVE CONDIVISE ---
 def ottieni_sessioni_attive_globali():
@@ -345,29 +363,51 @@ with zona_dinamica.container():
 
     else:
         now = ora_locale()
-        if now >= st.session_state.expiry_time:
-            blocca_classe_sicuro(st.session_state.classe_attiva)
-            scrivi_log("BLOCCO_AUTOMATICO", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
-            st.session_state.expiry_time = None
-            st.rerun()
-            
-        rimanente = st.session_state.expiry_time - now
-        secondi_totali = int(rimanente.total_seconds())
-        durata_totale = st.session_state.get("total_duration_secs", secondi_totali)
-        
-        st.info(f"🏫 Sessione attiva in **{st.session_state.classe_attiva}** | Insegnante: **{st.session_state.docente_effettivo}** | Lezione: **{st.session_state.materia_effettiva}**")
-        
-        st.markdown(f"### ⏳ Tempo rimanente: **{secondi_totali // 60}m {secondi_totali % 60}s**")
-        
-        percentuale_residua = max(0.0, min(1.0, secondi_totali / durata_totale)) if durata_totale > 0 else 0.0
-        st.progress(percentuale_residua)
-        st.write("")
+        scaduto = now >= st.session_state.expiry_time
 
-        if st.button("🔒 BLOCCA SAFARI", type="primary", use_container_width=True, key="btn_blocca_final"):
-            blocca_classe_sicuro(st.session_state.classe_attiva)
-            scrivi_log("BLOCCO_MANUALE", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
-            st.session_state.expiry_time = None
-            st.rerun()
-            
+        if scaduto and not st.session_state.get("blocco_fallito"):
+            successo = blocca_classe_sicuro(st.session_state.classe_attiva)
+            if successo:
+                scrivi_log("BLOCCO_AUTOMATICO", st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
+                st.session_state.expiry_time = None
+                st.rerun()
+            else:
+                # Il tempo è scaduto ma Jamf non ha confermato il blocco: NON registriamo un
+                # BLOCCO_AUTOMATICO falso nel log, e teniamo la sessione visibile con il
+                # pulsante di blocco manuale sempre attivo, invece di ritentare in silenzio
+                # ad ogni rerun (che martellerebbe l'API Jamf ogni secondo).
+                st.session_state.blocco_fallito = True
+
+        if st.session_state.get("blocco_fallito"):
+            st.error(
+                f"⚠️ BLOCCO AUTOMATICO NON RIUSCITO per **{st.session_state.classe_attiva}**: "
+                f"il tempo è scaduto ma Safari risulta ancora sbloccato per un problema tecnico "
+                f"con Jamf. Premi il pulsante sotto per bloccarlo manualmente."
+            )
+        else:
+            rimanente = st.session_state.expiry_time - now
+            secondi_totali = int(rimanente.total_seconds())
+            durata_totale = st.session_state.get("total_duration_secs", secondi_totali)
+
+            st.info(f"🏫 Sessione attiva in **{st.session_state.classe_attiva}** | Insegnante: **{st.session_state.docente_effettivo}** | Lezione: **{st.session_state.materia_effettiva}**")
+
+            st.markdown(f"### ⏳ Tempo rimanente: **{secondi_totali // 60}m {secondi_totali % 60}s**")
+
+            percentuale_residua = max(0.0, min(1.0, secondi_totali / durata_totale)) if durata_totale > 0 else 0.0
+            st.progress(percentuale_residua)
+            st.write("")
+
+        etichetta_blocco = "🔒 BLOCCA SAFARI (riprova)" if st.session_state.get("blocco_fallito") else "🔒 BLOCCA SAFARI"
+        if st.button(etichetta_blocco, type="primary", use_container_width=True, key="btn_blocca_final"):
+            if blocca_classe_sicuro(st.session_state.classe_attiva):
+                azione_log = "BLOCCO_AUTOMATICO" if st.session_state.get("blocco_fallito") else "BLOCCO_MANUALE"
+                scrivi_log(azione_log, st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
+                st.session_state.expiry_time = None
+                st.session_state.blocco_fallito = False
+                st.rerun()
+            else:
+                st.session_state.blocco_fallito = True
+                st.rerun()
+
         time.sleep(1)
         st.rerun()
