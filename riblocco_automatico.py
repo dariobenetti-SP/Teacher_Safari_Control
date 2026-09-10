@@ -75,16 +75,34 @@ def blocca_classe_sicuro(classe_nome):
     return True  # nessun device da spostare: nulla da fare, non è un errore
 
 
-def get_gsheet():
+def get_gsheet(tentativi_massimi=3):
     creds_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
     creds = Credentials.from_service_account_info(creds_info, scopes=GOOGLE_SCOPES)
     client = gspread.authorize(creds)
-    return client.open(GOOGLE_SHEET_NAME).sheet1
+    for tentativo in range(1, tentativi_massimi + 1):
+        try:
+            return client.open(GOOGLE_SHEET_NAME).sheet1
+        except Exception as e:
+            if tentativo < tentativi_massimi:
+                print(f"Tentativo {tentativo} fallito nell'apertura del foglio ({e}), riprovo...")
+                time.sleep(3)
+            else:
+                raise
 
 
-def scrivi_log(sheet, azione, classe, docente, materia, durata=""):
+def scrivi_log(sheet, azione, classe, docente, materia, durata="", tentativi_massimi=3):
     now = datetime.now(FUSO_ORARIO)
-    sheet.append_row([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata])
+    riga = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), azione, classe, docente, materia, durata]
+    for tentativo in range(1, tentativi_massimi + 1):
+        try:
+            sheet.append_row(riga)
+            return True
+        except Exception as e:
+            if tentativo < tentativi_massimi:
+                time.sleep(2)
+            else:
+                print(f"  ✗ Impossibile scrivere il log dopo {tentativi_massimi} tentativi: {e}")
+    return False
 
 
 def main():
