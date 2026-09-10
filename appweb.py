@@ -58,6 +58,15 @@ def formatta_materia(sigla):
         return f"{nome_esteso} · {sigla.strip()}"
     return sigla.strip()
 
+def rinoceronte_in_corsa(placeholder, secondi, messaggio="Un attimo di pazienza..."):
+    """Anima un piccolo rinoceronte che corre nel placeholder per la durata indicata."""
+    pista = ["🦏· · · · · · · ·", "· 🦏· · · · · ·", "· · 🦏· · · · ·", "· · · 🦏· · · ·",
+             "· · · · 🦏· · ·", "· · · · · 🦏· ·", "· · · · · · 🦏·", "· · · · · · · 🦏"]
+    passi = max(1, int(secondi / 0.25))
+    for i in range(passi):
+        placeholder.markdown(f"#### {pista[i % len(pista)]}\n{messaggio}")
+        time.sleep(0.25)
+
 # --- 3. DETERMINAZIONE FASCIA ORARIA ---
 def determina_ora_scolastica():
     current_time = ora_locale().time()
@@ -344,11 +353,15 @@ with zona_dinamica.container():
         
         if st.button("🔓 SBLOCCA SAFARI", type="primary", use_container_width=True, key="btn_sblocca_final"):
             ids = MAPPA_CLASSI[classe_sel]
+            rino = st.empty()
+            rino.markdown("#### 🦏· · · · · · · ·\nSto controllando i dispositivi della classe...")
             udids = recupera_dispositivi_in_gruppo(ids["bloccata"])
             if udids:
+                rinoceronte_in_corsa(rino, 1.0, "Sto sbloccando Safari...")
                 if esegui_azione("remove", ids["bloccata"], udids):
-                    time.sleep(1.5)
+                    rinoceronte_in_corsa(rino, 1.5, "Quasi fatto...")
                     if esegui_azione("add", ids["libera"], udids):
+                        rino.empty()
                         st.session_state.expiry_time = ora_locale() + timedelta(minutes=durata)
                         st.session_state.total_duration_secs = durata * 60
                         st.session_state.classe_attiva = classe_sel
@@ -357,9 +370,15 @@ with zona_dinamica.container():
                         
                         scrivi_log("SBLOCCO", classe_sel, doc_effettivo, mat_effettiva, durata)
                         st.rerun()
-                    else: st.error("Errore API: Impossibile aggiungere al gruppo 'libera'.")
-                else: st.error("Errore API: Impossibile rimuovere dal gruppo 'bloccata'.")
-            else: st.warning("Nessun iPad rilevato nel gruppo bloccato di questa classe.")
+                    else:
+                        rino.empty()
+                        st.error("Errore API: Impossibile aggiungere al gruppo 'libera'.")
+                else:
+                    rino.empty()
+                    st.error("Errore API: Impossibile rimuovere dal gruppo 'bloccata'.")
+            else:
+                rino.empty()
+                st.warning("Nessun iPad rilevato nel gruppo bloccato di questa classe.")
 
     else:
         now = ora_locale()
@@ -399,13 +418,17 @@ with zona_dinamica.container():
 
         etichetta_blocco = "🔒 BLOCCA SAFARI (riprova)" if st.session_state.get("blocco_fallito") else "🔒 BLOCCA SAFARI"
         if st.button(etichetta_blocco, type="primary", use_container_width=True, key="btn_blocca_final"):
+            rino = st.empty()
+            rinoceronte_in_corsa(rino, 1.0, "Sto ribloccando Safari...")
             if blocca_classe_sicuro(st.session_state.classe_attiva):
+                rino.empty()
                 azione_log = "BLOCCO_AUTOMATICO" if st.session_state.get("blocco_fallito") else "BLOCCO_MANUALE"
                 scrivi_log(azione_log, st.session_state.classe_attiva, st.session_state.docente_effettivo, st.session_state.materia_effettiva)
                 st.session_state.expiry_time = None
                 st.session_state.blocco_fallito = False
                 st.rerun()
             else:
+                rino.empty()
                 st.session_state.blocco_fallito = True
                 st.rerun()
 
