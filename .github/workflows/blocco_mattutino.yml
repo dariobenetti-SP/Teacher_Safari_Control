@@ -1,0 +1,26 @@
+name: Blocco mattutino Safari
+
+on:
+  workflow_dispatch: {}  # attivato esternamente da cron-job.org ogni giorno alle 8:00
+
+jobs:
+  blocco:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Imposta Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installa dipendenze
+        run: pip install requests gspread google-auth
+
+      - name: Esegui blocco mattutino
+        env:
+          JAMF_USERNAME: ${{ secrets.JAMF_USERNAME }}
+          JAMF_PASSWORD: ${{ secrets.JAMF_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python blocco_mattutino.py
