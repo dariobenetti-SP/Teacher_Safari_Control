@@ -1,0 +1,26 @@
+name: Rilascio serale Safari
+
+on:
+  workflow_dispatch: {}  # attivato esternamente da cron-job.org ogni giorno alle 13:40
+
+jobs:
+  rilascio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Imposta Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installa dipendenze
+        run: pip install requests gspread google-auth
+
+      - name: Esegui rilascio serale
+        env:
+          JAMF_USERNAME: ${{ secrets.JAMF_USERNAME }}
+          JAMF_PASSWORD: ${{ secrets.JAMF_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python rilascio_serale.py
