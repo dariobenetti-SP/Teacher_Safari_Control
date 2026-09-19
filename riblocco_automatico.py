@@ -63,16 +63,31 @@ def recupera_dispositivi_in_gruppo(gruppo_id):
         return []
 
 
-def blocca_classe_sicuro(classe_nome):
+def blocca_classe_sicuro(classe_nome, tentativi_massimi=3):
     if classe_nome not in MAPPA_CLASSI:
         return False
     ids = MAPPA_CLASSI[classe_nome]
     devices = recupera_dispositivi_in_gruppo(ids["libera"])
-    if devices:
-        esegui_azione("remove", ids["libera"], devices)
-        time.sleep(1.5)
-        return esegui_azione("add", ids["bloccata"], devices)
-    return True  # nessun device da spostare: nulla da fare, non è un errore
+    if not devices:
+        return True  # nessun device da spostare: nulla da fare, non è un errore
+
+    if not esegui_azione("remove", ids["libera"], devices):
+        return False  # rimozione mai avvenuta: nessun dispositivo orfano
+
+    time.sleep(1.5)
+
+    for tentativo in range(1, tentativi_massimi + 1):
+        if esegui_azione("add", ids["bloccata"], devices):
+            return True
+        if tentativo < tentativi_massimi:
+            time.sleep(2)
+
+    print(f"  ⚠️ ATTENZIONE: dispositivi di {classe_nome} rimossi da 'libera' ma MAI aggiunti a 'bloccata'.")
+    if esegui_azione("add", ids["libera"], devices):
+        print(f"  ↩️ Recuperati riportandoli in 'libera'.")
+    else:
+        print(f"  ✗✗ CRITICO: dispositivi di {classe_nome} ora orfani da entrambi i gruppi. Serve intervento manuale su Jamf.")
+    return False
 
 
 def get_gsheet(tentativi_massimi=3):
