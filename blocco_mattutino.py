@@ -59,17 +59,33 @@ def recupera_dispositivi_in_gruppo(gruppo_id):
         return []
 
 
-def sposta_dispositivi(gruppo_id_da, gruppo_id_a, tentativi_massimi=2):
+def sposta_dispositivi(gruppo_id_da, gruppo_id_a, tentativi_massimi=3):
+    devices = recupera_dispositivi_in_gruppo(gruppo_id_da)
+    if not devices:
+        return True  # nessun dispositivo da spostare: nulla da fare
+
+    if not esegui_azione("remove", gruppo_id_da, devices):
+        return False  # rimozione mai avvenuta: nessun dispositivo orfano, va bene ritentare da capo
+
+    time.sleep(1.5)
+
+    # I dispositivi sono già stati tolti dal gruppo di partenza: da qui in poi ritentiamo
+    # SOLO il passo di aggiunta, sugli stessi dispositivi, senza più interrogare il gruppo
+    # di partenza (che ora risulterebbe vuoto a prescindere, mascherando un fallimento reale).
     for tentativo in range(1, tentativi_massimi + 1):
-        devices = recupera_dispositivi_in_gruppo(gruppo_id_da)
-        if not devices:
-            return True  # nessun dispositivo da spostare: nulla da fare
-        esegui_azione("remove", gruppo_id_da, devices)
-        time.sleep(1.5)
         if esegui_azione("add", gruppo_id_a, devices):
             return True
         if tentativo < tentativi_massimi:
             time.sleep(2)
+
+    # Tutti i tentativi di aggiunta falliti: i dispositivi sono ORFANI (rimossi dal gruppo
+    # di partenza ma mai aggiunti a quello di destinazione). Ultimo tentativo di sicurezza:
+    # riportarli almeno nel gruppo di partenza originale, per non lasciarli scoperti.
+    print(f"  ⚠️ ATTENZIONE: dispositivi rimossi da {gruppo_id_da} ma MAI aggiunti a {gruppo_id_a}.")
+    if esegui_azione("add", gruppo_id_da, devices):
+        print(f"  ↩️ Recuperati riportandoli nel gruppo di partenza {gruppo_id_da}.")
+    else:
+        print(f"  ✗✗ CRITICO: dispositivi ora orfani da entrambi i gruppi ({gruppo_id_da} e {gruppo_id_a}). Serve intervento manuale su Jamf.")
     return False
 
 
