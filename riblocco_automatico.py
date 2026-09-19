@@ -40,6 +40,21 @@ MAPPA_CLASSI = {
     "VB":   {"bloccata": 22, "libera": 16},
 }
 
+# Gruppi "maestro": contengono SEMPRE tutti i dispositivi di una classe, a prescindere
+# dallo stato bloccata/libera. Servono come riferimento per scoprire dispositivi orfani
+# (spariti da entrambi i gruppi per un errore API). Da compilare con gli ID reali dei
+# gruppi statici creati appositamente su Jamf — finché sono vuoti, il controllo è disattivato.
+GRUPPI_TUTTI = {
+    "IA": 35,
+    "IIA": 36,
+    "IIIA": 37,
+    "IIIB": 38,
+    "IVA": 39,
+    "IVB": 40,
+    "VA": 41,
+    "VB": 42,
+}
+
 AUTH = (os.environ["JAMF_USERNAME"], os.environ["JAMF_PASSWORD"])
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
@@ -120,8 +135,37 @@ def scrivi_log(sheet, azione, classe, docente, materia, durata="", tentativi_mas
     return False
 
 
+def verifica_e_recupera_orfani(sheet):
+    """Confronta ogni gruppo 'maestro' (GRUPPI_TUTTI) con l'unione di bloccata+libera per
+    quella classe. Un dispositivo presente nel maestro ma in nessuno dei due gruppi
+    operativi è orfano: viene recuperato riportandolo in 'bloccata' (scelta sicura di
+    default), e l'evento viene loggato per visibilità."""
+    if not GRUPPI_TUTTI:
+        return  # controllo non ancora attivato (gruppi maestro non configurati)
+
+    for classe, id_tutti in GRUPPI_TUTTI.items():
+        if classe not in MAPPA_CLASSI:
+            continue
+        ids = MAPPA_CLASSI[classe]
+        tutti = set(recupera_dispositivi_in_gruppo(id_tutti))
+        bloccati = set(recupera_dispositivi_in_gruppo(ids["bloccata"]))
+        liberi = set(recupera_dispositivi_in_gruppo(ids["libera"]))
+        orfani = tutti - bloccati - liberi
+
+        if orfani:
+            print(f"⚠️ Trovati {len(orfani)} dispositivi orfani in {classe}: {sorted(orfani)}")
+            if esegui_azione("add", ids["bloccata"], list(orfani)):
+                print(f"  ✓ Recuperati in 'bloccata'.")
+                scrivi_log(sheet, "RECUPERO_ORFANI", classe, "Sistema", f"{len(orfani)} dispositivi recuperati")
+            else:
+                print(f"  ✗✗ CRITICO: impossibile recuperare i {len(orfani)} dispositivi orfani di {classe}. Intervento manuale necessario.")
+
+
 def main():
     sheet = get_gsheet()
+
+    verifica_e_recupera_orfani(sheet)
+
     records = sheet.get_all_records()
     if not records:
         print("Log vuoto, nulla da fare.")
