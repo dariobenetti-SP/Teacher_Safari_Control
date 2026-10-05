@@ -2,12 +2,19 @@
 riblocco_automatico.py
 
 Script INDIPENDENTE da Streamlit, pensato per essere eseguito periodicamente
-(es. ogni 2-5 minuti via GitHub Actions) da un server, non da un browser.
+(es. ogni 2 minuti via cron-job.org -> GitHub Actions) da un server, non da un browser.
 
 Legge il registro su Google Sheets, trova le classi il cui sblocco è scaduto
 e non è ancora stato seguito da un blocco, e le riporta nel gruppo Jamf
 "bloccata" — indipendentemente dal fatto che qualche docente abbia l'app
-aperta o meno.
+aperta o meno. Controlla anche (se configurato) dispositivi "orfani"
+(spariti da entrambi i gruppi bloccata/libera per un errore API) e li
+recupera in automatico.
+
+Ottimizzazione: l'intero elenco dispositivi viene scaricato da Jamf UNA
+SOLA VOLTA per esecuzione e riusato in memoria per tutte le classi, invece
+di rifare la stessa richiesta pesante decine di volte (causa di forte
+rallentamento e accumulo di esecuzioni in coda su GitHub Actions).
 
 Credenziali lette da variabili d'ambiente (impostate come GitHub Secrets):
 - JAMF_USERNAME
@@ -41,9 +48,7 @@ MAPPA_CLASSI = {
 }
 
 # Gruppi "maestro": contengono SEMPRE tutti i dispositivi di una classe, a prescindere
-# dallo stato bloccata/libera. Servono come riferimento per scoprire dispositivi orfani
-# (spariti da entrambi i gruppi per un errore API). Da compilare con gli ID reali dei
-# gruppi statici creati appositamente su Jamf — finché sono vuoti, il controllo è disattivato.
+# dallo stato bloccata/libera. Servono come riferimento per scoprire dispositivi orfani.
 GRUPPI_TUTTI = {
     "IA": 35,
     "IIA": 36,
@@ -68,21 +73,27 @@ def esegui_azione(azione, gruppo_id, udids):
         return False
 
 
-def recupera_dispositivi_in_gruppo(gruppo_id):
+def recupera_tutti_dispositivi():
+    """Scarica l'intero elenco dispositivi UNA SOLA VOLTA per esecuzione."""
     try:
-        r = requests.get(f"{JAMF_URL}/devices", auth=AUTH, headers=HEADERS, timeout=15)
+        r = requests.get(f"{JAMF_URL}/devices", auth=AUTH, headers=HEADERS, timeout=20)
         if r.status_code == 200:
-            return [d["UDID"] for d in r.json().get("devices", []) if str(gruppo_id) in [str(g) for g in d.get("groupIds", [])]]
+            return r.json().get("devices", [])
         return []
     except requests.RequestException:
         return []
 
 
-def blocca_classe_sicuro(classe_nome, tentativi_massimi=3):
+def filtra_gruppo(dispositivi, gruppo_id):
+    """Filtra in memoria (nessuna chiamata di rete) i dispositivi di un gruppo, dall'elenco già scaricato."""
+    return [d["UDID"] for d in dispositivi if str(gruppo_id) in [str(g) for g in d.get("groupIds", [])]]
+
+
+def blocca_classe_sicuro(classe_nome, dispositivi, tentativi_massimi=3):
     if classe_nome not in MAPPA_CLASSI:
         return False
     ids = MAPPA_CLASSI[classe_nome]
-    devices = recupera_dispositivi_in_gruppo(ids["libera"])
+    devices = filtra_gruppo(dispositivi, ids["libera"])
     if not devices:
         return True  # nessun device da spostare: nulla da fare, non è un errore
 
@@ -135,21 +146,21 @@ def scrivi_log(sheet, azione, classe, docente, materia, durata="", tentativi_mas
     return False
 
 
-def verifica_e_recupera_orfani(sheet):
+def verifica_e_recupera_orfani(sheet, dispositivi):
     """Confronta ogni gruppo 'maestro' (GRUPPI_TUTTI) con l'unione di bloccata+libera per
-    quella classe. Un dispositivo presente nel maestro ma in nessuno dei due gruppi
-    operativi è orfano: viene recuperato riportandolo in 'bloccata' (scelta sicura di
-    default), e l'evento viene loggato per visibilità."""
+    quella classe, usando l'elenco dispositivi già scaricato (nessuna chiamata aggiuntiva).
+    Un dispositivo presente nel maestro ma in nessuno dei due gruppi operativi è orfano:
+    viene recuperato riportandolo in 'bloccata' (scelta sicura di default)."""
     if not GRUPPI_TUTTI:
-        return  # controllo non ancora attivato (gruppi maestro non configurati)
+        return  # controllo non ancora attivato
 
     for classe, id_tutti in GRUPPI_TUTTI.items():
         if classe not in MAPPA_CLASSI:
             continue
         ids = MAPPA_CLASSI[classe]
-        tutti = set(recupera_dispositivi_in_gruppo(id_tutti))
-        bloccati = set(recupera_dispositivi_in_gruppo(ids["bloccata"]))
-        liberi = set(recupera_dispositivi_in_gruppo(ids["libera"]))
+        tutti = set(filtra_gruppo(dispositivi, id_tutti))
+        bloccati = set(filtra_gruppo(dispositivi, ids["bloccata"]))
+        liberi = set(filtra_gruppo(dispositivi, ids["libera"]))
         orfani = tutti - bloccati - liberi
 
         if orfani:
@@ -163,8 +174,9 @@ def verifica_e_recupera_orfani(sheet):
 
 def main():
     sheet = get_gsheet()
+    dispositivi = recupera_tutti_dispositivi()
 
-    verifica_e_recupera_orfani(sheet)
+    verifica_e_recupera_orfani(sheet, dispositivi)
 
     records = sheet.get_all_records()
     if not records:
@@ -177,8 +189,6 @@ def main():
         print("Nessuna riga di oggi nel registro.")
         return
 
-    # L'ultima riga di oggi per ciascuna classe (il foglio è già in ordine cronologico
-    # perché ogni azione viene sempre aggiunta in fondo con append_row)
     ultima_per_classe = {}
     for riga in righe_oggi:
         ultima_per_classe[riga.get("Classe")] = riga
@@ -187,7 +197,7 @@ def main():
 
     for classe, riga in ultima_per_classe.items():
         if riga.get("Azione") != "SBLOCCO":
-            continue  # l'ultima azione registrata è già un blocco: nulla da fare
+            continue
 
         try:
             ora_inizio = datetime.strptime(f"{oggi} {riga['Ora']}", "%d/%m/%Y %H:%M:%S").replace(tzinfo=FUSO_ORARIO)
@@ -200,7 +210,7 @@ def main():
 
         if ora_fine <= ora_attuale:
             print(f"Sblocco scaduto per {classe} (fine prevista {ora_fine.strftime('%H:%M')}) → riblocco in corso...")
-            if blocca_classe_sicuro(classe):
+            if blocca_classe_sicuro(classe, dispositivi):
                 scrivi_log(sheet, "BLOCCO_AUTOMATICO", classe, riga.get("Docente", ""), riga.get("Materia", ""))
                 print(f"  ✓ {classe} ribloccata correttamente.")
             else:
