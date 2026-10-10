@@ -24,7 +24,7 @@ Credenziali lette da variabili d'ambiente (impostate come GitHub Secrets):
 import os
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
 
 import requests
@@ -116,13 +116,14 @@ def blocca_classe_sicuro(classe_nome, dispositivi, tentativi_massimi=3):
     return False
 
 
-def get_gsheet(tentativi_massimi=3):
+def apri_spreadsheet(tentativi_massimi=3):
+    """Apre l'intero file Google Sheets (log + foglio Holiday) con qualche tentativo."""
     creds_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
     creds = Credentials.from_service_account_info(creds_info, scopes=GOOGLE_SCOPES)
     client = gspread.authorize(creds)
     for tentativo in range(1, tentativi_massimi + 1):
         try:
-            return client.open(GOOGLE_SHEET_NAME).sheet1
+            return client.open(GOOGLE_SHEET_NAME)
         except Exception as e:
             if tentativo < tentativi_massimi:
                 print(f"Tentativo {tentativo} fallito nell'apertura del foglio ({e}), riprovo...")
@@ -146,14 +147,43 @@ def scrivi_log(sheet, azione, classe, docente, materia, durata="", tentativi_mas
     return False
 
 
-def verifica_e_recupera_orfani(sheet, dispositivi):
-    """Confronta ogni gruppo 'maestro' (GRUPPI_TUTTI) con l'unione di bloccata+libera per
-    quella classe, usando l'elenco dispositivi già scaricato (nessuna chiamata aggiuntiva).
-    Un dispositivo presente nel maestro ma in nessuno dei due gruppi operativi è orfano:
-    viene recuperato riportandolo in 'bloccata' (scelta sicura di default)."""
-    if not GRUPPI_TUTTI:
-        return  # controllo non ancora attivato
+# Finestra in cui il riblocco automatico ha senso: lezioni (lun-ven). Dopo le 13:40 il
+# rilascio serale libera comunque tutti gli iPad, quindi non c'è più nulla da ribloccare.
+ORA_INIZIO = dt_time(8, 0)
+ORA_FINE = dt_time(13, 40)
 
+
+def fuori_finestra_oraria():
+    """True se adesso è weekend o fuori dall'orario delle lezioni (nessuna chiamata di rete)."""
+    adesso = datetime.now(FUSO_ORARIO)
+    if adesso.weekday() >= 5:
+        print("Oggi è weekend, nessuna azione.")
+        return True
+    if not (ORA_INIZIO <= adesso.time() < ORA_FINE):
+        print(f"Ore {adesso.strftime('%H:%M')}: fuori dall'orario delle lezioni, nessuna azione.")
+        return True
+    return False
+
+
+def oggi_e_festivo(spreadsheet):
+    """True se la data di oggi è nel foglio 'Holiday' (colonna DATA, formato GG/MM/AAAA)."""
+    try:
+        foglio = spreadsheet.worksheet("Holiday")
+        date_festive = [str(r.get("DATA", "")).strip() for r in foglio.get_all_records()]
+        oggi = datetime.now(FUSO_ORARIO).strftime("%d/%m/%Y")
+        if oggi in date_festive:
+            print(f"Oggi ({oggi}) è nel foglio Holiday, nessuna azione.")
+            return True
+    except Exception as e:
+        # Meglio procedere che saltare per errore un giorno di scuola.
+        print(f"Impossibile controllare il foglio Holiday ({e}), procedo comunque.")
+    return False
+
+
+def trova_orfani(dispositivi):
+    """Restituisce {classe: set(UDID)} dei dispositivi presenti nel gruppo maestro ma in nessuno
+    tra bloccata e libera, usando l'elenco già scaricato (nessuna chiamata di rete)."""
+    risultato = {}
     for classe, id_tutti in GRUPPI_TUTTI.items():
         if classe not in MAPPA_CLASSI:
             continue
@@ -162,21 +192,60 @@ def verifica_e_recupera_orfani(sheet, dispositivi):
         bloccati = set(filtra_gruppo(dispositivi, ids["bloccata"]))
         liberi = set(filtra_gruppo(dispositivi, ids["libera"]))
         orfani = tutti - bloccati - liberi
-
         if orfani:
-            print(f"⚠️ Trovati {len(orfani)} dispositivi orfani in {classe}: {sorted(orfani)}")
-            if esegui_azione("add", ids["bloccata"], list(orfani)):
-                print(f"  ✓ Recuperati in 'bloccata'.")
-                scrivi_log(sheet, "RECUPERO_ORFANI", classe, "Sistema", f"{len(orfani)} dispositivi recuperati")
-            else:
-                print(f"  ✗✗ CRITICO: impossibile recuperare i {len(orfani)} dispositivi orfani di {classe}. Intervento manuale necessario.")
+            risultato[classe] = orfani
+    return risultato
+
+
+def verifica_e_recupera_orfani(sheet, dispositivi):
+    """Recupera in 'bloccata' i dispositivi orfani (spariti da bloccata e libera).
+
+    Durante uno sblocco/blocco in corso (remove -> pausa -> add) i dispositivi risultano per
+    qualche secondo in nessuno dei due gruppi: sono orfani 'apparenti'. Per non confonderli con
+    quelli veri, quando troviamo dei sospetti aspettiamo, riscarichiamo l'elenco e agiamo solo
+    su chi è ancora orfano."""
+    if not GRUPPI_TUTTI:
+        return dispositivi
+
+    sospetti = trova_orfani(dispositivi)
+    if not sospetti:
+        return dispositivi
+
+    print(f"Possibili orfani in: {', '.join(sospetti)}. Ricontrollo tra 20 secondi...")
+    time.sleep(20)
+    dispositivi = recupera_tutti_dispositivi()
+    if not dispositivi:
+        print("Impossibile riscaricare l'elenco dispositivi: rimando il recupero al prossimo ciclo.")
+        return []
+
+    for classe, orfani in trova_orfani(dispositivi).items():
+        ids = MAPPA_CLASSI[classe]
+        print(f"⚠️ {len(orfani)} dispositivi orfani confermati in {classe}: {sorted(orfani)}")
+        if esegui_azione("add", ids["bloccata"], list(orfani)):
+            print("  ✓ Recuperati in 'bloccata'.")
+            scrivi_log(sheet, "RECUPERO_ORFANI", classe, "Sistema", f"{len(orfani)} dispositivi recuperati")
+        else:
+            print(f"  ✗✗ CRITICO: impossibile recuperare i dispositivi orfani di {classe}. Intervento manuale necessario.")
+    return dispositivi
 
 
 def main():
-    sheet = get_gsheet()
-    dispositivi = recupera_tutti_dispositivi()
+    if fuori_finestra_oraria():
+        return
 
-    verifica_e_recupera_orfani(sheet, dispositivi)
+    spreadsheet = apri_spreadsheet()
+    if oggi_e_festivo(spreadsheet):
+        return
+
+    sheet = spreadsheet.sheet1
+    dispositivi = recupera_tutti_dispositivi()
+    if not dispositivi:
+        # Un elenco vuoto non è "tutto a posto": significa che Jamf non ha risposto.
+        # Falliamo in modo visibile invece di far finta di non avere nulla da fare.
+        print("✗ Impossibile scaricare l'elenco dispositivi da Jamf.")
+        raise SystemExit(1)
+
+    dispositivi = verifica_e_recupera_orfani(sheet, dispositivi) or dispositivi
 
     records = sheet.get_all_records()
     if not records:
